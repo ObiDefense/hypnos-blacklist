@@ -35,10 +35,13 @@ function parseForm(body) {
   return out;
 }
 
+/** Untrusted text: no Minecraft formatting codes, no control characters, bounded length. */
 function clip(text, max) {
-  text = String(text == null ? '' : text).trim();
+  text = String(text == null ? '' : text).replace(/\u00a7[\s\S]?/g, '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim();
   return text.length > max ? text.slice(0, max) : text;
 }
+
+const LINK = /^https?:\/\/[^\s"<>]+$/i;
 
 /** The submission in an issue, or { error }. */
 function readSubmission(issue) {
@@ -50,7 +53,7 @@ function readSubmission(issue) {
   if (!reason) return { error: 'The reason is empty.' };
   const evidence = String(form.Evidence || '').split(/\r?\n/).map((l) => clip(l.replace(/^[-*•]\s*/, ''), 300))
     .filter(Boolean).slice(0, 10);
-  if (!evidence.length) return { error: 'There is no evidence.' };
+  if (!evidence.some((e) => LINK.test(e))) return { error: 'The evidence needs at least one link (https://…) to a video or screenshot.' };
   return { name, tag, reason, evidence, notes: clip(form.Notes, 500) };
 }
 
@@ -232,7 +235,11 @@ async function main() {
     return;
   }
 
-  // approved submission
+  // approved submission: only issues made with the "Submit a player" form
+  if (!labels.includes('submission')) {
+    await say('`approved` only works on issues made with the *Submit a player* form.');
+    return;
+  }
   const sub = readSubmission(issue);
   if (sub.error) {
     await say(`Can't add this: ${sub.error} Edit the issue, then remove and re-add the \`approved\` label.`);

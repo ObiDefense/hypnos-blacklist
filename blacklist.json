@@ -1,4 +1,21 @@
 {
   "version": 1,
-  "entries": []
+  "entries": [
+    {
+      "uuid": "58a6526a-34ee-45e5-9e4f-1c9fda36ee0c",
+      "name": "TestPlayer123",
+      "reason": "i dont like him and thats it",
+      "tag": "blatant_cheater",
+      "evidence": [
+        "dont need evidence im im owner"
+      ],
+      "notes": "i fucking hate this guy",
+      "addedBy": "ObiDefense",
+      "approvedBy": "ObiDefense",
+      "issue": 1,
+      "addedAt": 1795701843887,
+      "updatedAt": 1795701843887
+    }
+  ],
+  "updated": 1795701843887
 }

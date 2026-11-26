@@ -2,6 +2,21 @@
   "version": 1,
   "entries": [
     {
+      "uuid": "743a8b8d-cb7a-4414-942b-4d1ce615fa72",
+      "name": "DownloadFolder",
+      "reason": "super nigger",
+      "tag": "info",
+      "evidence": [
+        "ur mom"
+      ],
+      "notes": "",
+      "addedBy": "SlipperDev",
+      "approvedBy": "ObiDefense",
+      "issue": 2,
+      "addedAt": 1795702231516,
+      "updatedAt": 1795702231516
+    },
+    {
       "uuid": "58a6526a-34ee-45e5-9e4f-1c9fda36ee0c",
       "name": "TestPlayer123",
       "reason": "i dont like him and thats it",
@@ -17,5 +32,5 @@
       "updatedAt": 1795701843887
     }
   ],
-  "updated": 1795701843887
+  "updated": 1795702231517
 }

@@ -1,0 +1,17 @@
+name: Request removal
+description: Ask for a player to be taken off the Hypnos blacklist.
+title: "Removal: "
+labels: ["removal-request"]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Minecraft name
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why should they be removed?
+    validations:
+      required: true

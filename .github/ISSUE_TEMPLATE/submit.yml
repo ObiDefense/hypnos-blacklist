@@ -1,0 +1,52 @@
+name: Submit a player
+description: Suggest a player for the Hypnos blacklist. A mod reviews it before it is added.
+title: "Submit: "
+labels: ["submission"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Only submit players you have proof for. A mod checks the evidence before anything is added.
+  - type: input
+    id: name
+    attributes:
+      label: Minecraft name
+      placeholder: Notch
+    validations:
+      required: true
+  - type: dropdown
+    id: tag
+    attributes:
+      label: Tag
+      options:
+        - Blatant Cheater
+        - Closet Cheater
+        - Confirmed Cheater
+        - Sniper
+        - Possible Sniper
+        - Legit Sniper
+        - Caution
+        - Account
+        - Info
+    validations:
+      required: true
+  - type: input
+    id: reason
+    attributes:
+      label: Reason
+      placeholder: Killaura, scaffold, ...
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Links to videos or screenshots, one per line.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+    validations:
+      required: false

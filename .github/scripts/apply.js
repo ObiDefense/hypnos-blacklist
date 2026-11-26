@@ -1,0 +1,266 @@
+// Runs in GitHub Actions when a mod labels an issue (see ../workflows/blacklist.yml).
+//   approved  on a submission       → player added to / updated in blacklist.json, issue closed
+//   approved  on a removal request  → player removed
+//   remove                          → player removed
+//   denied                          → issue closed, nothing changes
+// Issue text is untrusted: it is only parsed as data, never put into a shell command.
+
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
+
+const LIST = path.join(process.cwd(), 'blacklist.json');
+const TAGS = {
+  'blatant cheater': 'blatant_cheater', 'closet cheater': 'closet_cheater', 'confirmed cheater': 'confirmed_cheater',
+  sniper: 'sniper', 'possible sniper': 'possible_sniper', 'legit sniper': 'legit_sniper',
+  caution: 'caution', account: 'account', info: 'info',
+};
+const NAME = /^\w{1,16}$/;
+
+// ------------------------------------------------------------------------------------------- parsing
+
+/** Issue-form body ("### Label\n\nvalue") → { label: value }. */
+function parseForm(body) {
+  const out = {};
+  const parts = String(body || '').split(/^### +/m).slice(1);
+  for (const part of parts) {
+    const nl = part.indexOf('\n');
+    const label = (nl < 0 ? part : part.slice(0, nl)).trim();
+    let value = nl < 0 ? '' : part.slice(nl + 1).trim();
+    if (value === '_No response_') value = '';
+    out[label] = value;
+  }
+  return out;
+}
+
+function clip(text, max) {
+  text = String(text == null ? '' : text).trim();
+  return text.length > max ? text.slice(0, max) : text;
+}
+
+/** The submission in an issue, or { error }. */
+function readSubmission(issue) {
+  const form = parseForm(issue.body);
+  const name = clip(form['Minecraft name'], 32).replace(/^@/, '');
+  if (!NAME.test(name)) return { error: `"${clip(name, 32)}" is not a valid Minecraft name.` };
+  const tag = TAGS[String(form.Tag || '').trim().toLowerCase()] || 'blatant_cheater';
+  const reason = clip(form.Reason, 200);
+  if (!reason) return { error: 'The reason is empty.' };
+  const evidence = String(form.Evidence || '').split(/\r?\n/).map((l) => clip(l.replace(/^[-*•]\s*/, ''), 300))
+    .filter(Boolean).slice(0, 10);
+  if (!evidence.length) return { error: 'There is no evidence.' };
+  return { name, tag, reason, evidence, notes: clip(form.Notes, 500) };
+}
+
+function readName(issue) {
+  const name = clip(parseForm(issue.body)['Minecraft name'], 32).replace(/^@/, '');
+  return NAME.test(name) ? name : null;
+}
+
+// ------------------------------------------------------------------------------------------- list
+
+function load() {
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(LIST, 'utf8'));
+  } catch {
+    data = {};
+  }
+  if (Array.isArray(data)) data = { entries: data };
+  if (!Array.isArray(data.entries)) data.entries = [];
+  data.version = 1;
+  return data;
+}
+
+function save(data) {
+  data.updated = Date.now();
+  data.entries.sort((a, b) => String(a.name).localeCompare(String(b.name), 'en', { sensitivity: 'base' }));
+  fs.writeFileSync(LIST, `${JSON.stringify(data, null, 2)}\n`);
+}
+
+function findEntry(data, uuid, name) {
+  const lower = String(name || '').toLowerCase();
+  return data.entries.find((e) => uuid && e.uuid && e.uuid.toLowerCase() === uuid.toLowerCase())
+    || data.entries.find((e) => String(e.name).toLowerCase() === lower);
+}
+
+/** Adds or updates; keeps the original added date / submitter and merges evidence. */
+function upsert(data, entry) {
+  const now = Date.now();
+  const existing = findEntry(data, entry.uuid, entry.name);
+  if (existing) {
+    Object.assign(existing, {
+      uuid: entry.uuid || existing.uuid || null,
+      name: entry.name,
+      reason: entry.reason,
+      tag: entry.tag,
+      notes: entry.notes || existing.notes || '',
+      evidence: [...new Set([...(existing.evidence || []), ...entry.evidence])],
+      approvedBy: entry.approvedBy,
+      issue: entry.issue,
+      updatedAt: now,
+    });
+    return { entry: existing, updated: true };
+  }
+  const fresh = {
+    uuid: entry.uuid || null,
+    name: entry.name,
+    reason: entry.reason,
+    tag: entry.tag,
+    evidence: entry.evidence,
+    notes: entry.notes || '',
+    addedBy: entry.addedBy,
+    approvedBy: entry.approvedBy,
+    issue: entry.issue,
+    addedAt: now,
+    updatedAt: now,
+  };
+  data.entries.push(fresh);
+  return { entry: fresh, updated: false };
+}
+
+function remove(data, name) {
+  const e = findEntry(data, null, name);
+  if (!e) return null;
+  data.entries = data.entries.filter((x) => x !== e);
+  return e;
+}
+
+// ------------------------------------------------------------------------------------------- GitHub
+
+async function api(method, route, body) {
+  const res = await fetch(`https://api.github.com${route}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`${method} ${route}: ${res.status} ${await res.text()}`);
+  return res.status === 204 ? null : res.json();
+}
+
+async function lookupPlayer(name) {
+  try {
+    const res = await fetch(`https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(name)}`);
+    if (res.status !== 200) return null;
+    const { id, name: real } = await res.json();
+    return { uuid: `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`, name: real };
+  } catch {
+    return null;
+  }
+}
+
+function git(...args) {
+  return execFileSync('git', args, { stdio: 'pipe' }).toString();
+}
+
+/** Commits blacklist.json if it changed; retries on a concurrent push. */
+function commit(message) {
+  git('config', 'user.name', 'github-actions[bot]');
+  git('config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com');
+  git('add', 'blacklist.json');
+  try {
+    git('diff', '--cached', '--quiet');
+    return false; // nothing changed
+  } catch {
+    // there are changes
+  }
+  git('commit', '-m', message);
+  for (let i = 0; i < 3; i++) {
+    try {
+      git('push');
+      return true;
+    } catch (err) {
+      if (i === 2) throw err;
+      git('pull', '--rebase');
+    }
+  }
+  return true;
+}
+
+// ------------------------------------------------------------------------------------------- main
+
+async function main() {
+  const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+  const repo = process.env.GITHUB_REPOSITORY;
+  const issue = event.issue;
+  const label = event.label.name;
+  const mod = event.sender.login;
+  const say = (text) => api('POST', `/repos/${repo}/issues/${issue.number}/comments`, { body: text });
+  const close = (reason) => api('PATCH', `/repos/${repo}/issues/${issue.number}`, { state: 'closed', state_reason: reason });
+
+  // labels already need Triage access; check again so a misconfigured repo can't be abused
+  const perm = await api('GET', `/repos/${repo}/collaborators/${encodeURIComponent(mod)}/permission`);
+  const role = perm.role_name || perm.permission;
+  if (!['admin', 'maintain', 'write', 'triage'].includes(role)) {
+    console.log(`${mod} (${role}) may not review, ignoring`);
+    return;
+  }
+
+  const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
+  const isRemoval = labels.includes('removal-request');
+
+  if (label === 'denied') {
+    await say(`Denied by @${mod}.`);
+    await close('not_planned');
+    return;
+  }
+
+  if (label === 'remove' || (label === 'approved' && isRemoval)) {
+    const name = readName(issue);
+    if (!name) {
+      await say('I could not find a valid Minecraft name in this issue.');
+      return;
+    }
+    const data = load();
+    const removed = remove(data, name);
+    if (!removed) {
+      await say(`\`${name}\` is not on the blacklist.`);
+      await close('completed');
+      return;
+    }
+    save(data);
+    commit(`Remove ${removed.name} (#${issue.number}, by ${mod})`);
+    await say(`Removed \`${removed.name}\` from the blacklist (by @${mod}).`);
+    await close('completed');
+    return;
+  }
+
+  // approved submission
+  const sub = readSubmission(issue);
+  if (sub.error) {
+    await say(`Can't add this: ${sub.error} Edit the issue, then remove and re-add the \`approved\` label.`);
+    return;
+  }
+  const player = await lookupPlayer(sub.name);
+  const data = load();
+  const result = upsert(data, {
+    ...sub,
+    uuid: player ? player.uuid : null,
+    name: player ? player.name : sub.name,
+    addedBy: issue.user.login,
+    approvedBy: mod,
+    issue: issue.number,
+  });
+  save(data);
+  commit(`${result.updated ? 'Update' : 'Add'} ${result.entry.name} (#${issue.number}, approved by ${mod})`);
+  await say(`${result.updated ? 'Updated' : 'Added'} \`${result.entry.name}\` (${sub.tag.replace(/_/g, ' ')}) – approved by @${mod}.`
+    + `${player ? '' : '\n\nNo Mojang account with that name was found (nick?), so Hypnos matches it by name.'}`
+    + '\n\nHypnos clients pick it up within a few minutes.');
+  await close('completed');
+}
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = { parseForm, readSubmission, readName, upsert, remove, findEntry };

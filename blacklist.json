@@ -2,6 +2,21 @@
   "version": 1,
   "entries": [
     {
+      "uuid": "1c01598f-cf66-40ce-b6bd-7bbf700e7deb",
+      "name": "7bless",
+      "reason": "legit scaf + aa",
+      "tag": "closet_cheater",
+      "evidence": [
+        "pornhub.com/sweetiefox"
+      ],
+      "notes": "",
+      "addedBy": "SlipperDev",
+      "approvedBy": "ObiDefense",
+      "issue": 5,
+      "addedAt": 1795702765425,
+      "updatedAt": 1795702765425
+    },
+    {
       "uuid": "743a8b8d-cb7a-4414-942b-4d1ce615fa72",
       "name": "DownloadFolder",
       "reason": "super nigger",
@@ -47,5 +62,5 @@
       "updatedAt": 1795701843887
     }
   ],
-  "updated": 1795702557320
+  "updated": 1795702765425
 }

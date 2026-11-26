@@ -30,22 +30,7 @@
       "issue": 2,
       "addedAt": 1795702231516,
       "updatedAt": 1795702231516
-    },
-    {
-      "uuid": "a0976630-d40f-4831-ba60-57013bed9ac6",
-      "name": "Mer1c_",
-      "reason": "test",
-      "tag": "info",
-      "evidence": [
-        "test"
-      ],
-      "notes": "test",
-      "addedBy": "ObiDefense",
-      "approvedBy": "ObiDefense",
-      "issue": 6,
-      "addedAt": 1795702557319,
-      "updatedAt": 1795702557319
     }
   ],
-  "updated": 1795703858662
+  "updated": 1795703882660
 }

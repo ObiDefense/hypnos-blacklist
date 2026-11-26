@@ -3,6 +3,7 @@
 //   approved  on a removal request  → player removed
 //   remove                          → player removed
 //   denied                          → issue closed, nothing changes
+//   weekly / "Run workflow"         → names of listed UUIDs updated after name changes
 // Issue text is untrusted: it is only parsed as data, never put into a shell command.
 
 'use strict';
@@ -18,6 +19,13 @@ const TAGS = {
   caution: 'caution', account: 'account', info: 'info',
 };
 const NAME = /^\w{1,16}$/;
+const UUID = /^([0-9a-f]{8})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{12})$/i;
+
+/** Dashed lower-case UUID from the form, or null. */
+function readUuid(form) {
+  const m = UUID.exec(String(form.UUID || '').trim());
+  return m ? m.slice(1).join('-').toLowerCase() : null;
+}
 
 // ------------------------------------------------------------------------------------------- parsing
 
@@ -55,7 +63,7 @@ function readSubmission(issue) {
   const evidence = String(form.Evidence || '').split(/\r?\n/).map((l) => clip(l.replace(/^[-*•]\s*/, ''), 300))
     .filter(Boolean).slice(0, 10);
   if (!evidence.some((e) => LINK.test(e))) return { error: 'The evidence needs at least one link (https://…) to a video or screenshot.' };
-  return { name, tag, reason, evidence, notes: clip(form.Notes, 500) };
+  return { name, uuid: readUuid(form), tag, reason, evidence, notes: clip(form.Notes, 500) };
 }
 
 function readName(issue) {
@@ -87,7 +95,18 @@ function save(data) {
 function findEntry(data, uuid, name) {
   const lower = String(name || '').toLowerCase();
   return data.entries.find((e) => uuid && e.uuid && e.uuid.toLowerCase() === uuid.toLowerCase())
-    || data.entries.find((e) => String(e.name).toLowerCase() === lower);
+    || data.entries.find((e) => String(e.name).toLowerCase() === lower)
+    || data.entries.find((e) => (e.pastNames || []).some((n) => String(n).toLowerCase() === lower));
+}
+
+/** Old name → pastNames (max 10), new name in. */
+function rename(entry, name) {
+  if (!name || name === entry.name) return false;
+  const past = (entry.pastNames || []).filter((n) => n.toLowerCase() !== name.toLowerCase() && n.toLowerCase() !== String(entry.name).toLowerCase());
+  if (entry.name && entry.name.toLowerCase() !== name.toLowerCase()) past.push(entry.name);
+  entry.pastNames = past.slice(-10);
+  entry.name = name;
+  return true;
 }
 
 /** Adds or updates; keeps the original added date / submitter and merges evidence. */
@@ -95,9 +114,9 @@ function upsert(data, entry) {
   const now = Date.now();
   const existing = findEntry(data, entry.uuid, entry.name);
   if (existing) {
+    rename(existing, entry.name);
     Object.assign(existing, {
       uuid: entry.uuid || existing.uuid || null,
-      name: entry.name,
       reason: entry.reason,
       tag: entry.tag,
       notes: entry.notes || existing.notes || '',
@@ -125,8 +144,8 @@ function upsert(data, entry) {
   return { entry: fresh, updated: false };
 }
 
-function remove(data, name) {
-  const e = findEntry(data, null, name);
+function remove(data, name, uuid) {
+  const e = findEntry(data, uuid, name);
   if (!e) return null;
   data.entries = data.entries.filter((x) => x !== e);
   return e;
@@ -160,6 +179,40 @@ async function lookupPlayer(name) {
   }
 }
 
+/** UUID → { uuid, name } (current name), null if Mojang doesn't know it. */
+async function profileOf(uuid) {
+  try {
+    const res = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${uuid.replace(/-/g, '')}`);
+    if (res.status !== 200) return null;
+    const { name } = await res.json();
+    return NAME.test(name) ? { uuid, name } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Weekly: every listed UUID gets its current name (old names stay matchable through pastNames). */
+async function refreshNames() {
+  const data = load();
+  const changes = [];
+  for (const e of data.entries) {
+    if (!e.uuid) continue;
+    const p = await profileOf(e.uuid);
+    if (p && p.name !== e.name) {
+      changes.push(`${e.name} → ${p.name}`);
+      rename(e, p.name);
+    }
+    await new Promise((r) => setTimeout(r, 250)); // stay well under Mojang's rate limit
+  }
+  if (!changes.length) {
+    console.log('No name changes');
+    return;
+  }
+  save(data);
+  commit(`Name changes: ${changes.join(', ').slice(0, 200)}`);
+  console.log(changes.join('\n'));
+}
+
 function git(...args) {
   return execFileSync('git', args, { stdio: 'pipe' }).toString();
 }
@@ -191,6 +244,10 @@ function commit(message) {
 // ------------------------------------------------------------------------------------------- main
 
 async function main() {
+  if (process.env.GITHUB_EVENT_NAME === 'schedule' || process.env.GITHUB_EVENT_NAME === 'workflow_dispatch') {
+    await refreshNames(); // nothing from issues is read here
+    return;
+  }
   const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
   const repo = process.env.GITHUB_REPOSITORY;
   const issue = event.issue;
@@ -220,14 +277,15 @@ async function main() {
 
   if (label === 'remove' || (label === 'approved' && isRemoval)) {
     const name = readName(issue);
-    if (!name) {
-      await say('I could not find a valid Minecraft name in this issue.');
+    const uuid = readUuid(form);
+    if (!name && !uuid) {
+      await say('I could not find a valid Minecraft name or UUID in this issue.');
       return;
     }
     const data = load();
-    const removed = remove(data, name);
+    const removed = remove(data, name, uuid);
     if (!removed) {
-      await say(`\`${name}\` is not on the blacklist.`);
+      await say(`\`${name || uuid}\` is not on the blacklist.`);
       await close('completed');
       return;
     }
@@ -248,7 +306,11 @@ async function main() {
     await say(`Can't add this: ${sub.error} Edit the issue, then remove and re-add the \`approved\` label.`);
     return;
   }
-  const player = await lookupPlayer(sub.name);
+  // the UUID (sent by Hypnos) identifies the account even after a name change; else look the name up
+  const byUuid = sub.uuid ? await profileOf(sub.uuid) : null;
+  const player = byUuid || await lookupPlayer(sub.name);
+  const renamedNote = byUuid && byUuid.name.toLowerCase() !== sub.name.toLowerCase()
+    ? `\n\nThat UUID belongs to \`${byUuid.name}\` now (submitted as \`${sub.name}\`).` : '';
   const data = load();
   const result = upsert(data, {
     ...sub,
@@ -262,6 +324,7 @@ async function main() {
   commit(`${result.updated ? 'Update' : 'Add'} ${result.entry.name} (#${issue.number}, approved by ${mod})`);
   await say(`${result.updated ? 'Updated' : 'Added'} \`${result.entry.name}\` (${sub.tag.replace(/_/g, ' ')}) – approved by @${mod}.`
     + `${player ? '' : '\n\nNo Mojang account with that name was found (nick?), so Hypnos matches it by name.'}`
+    + renamedNote
     + '\n\nHypnos clients pick it up within a few minutes.');
   await close('completed');
 }
@@ -273,4 +336,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseForm, readSubmission, readName, upsert, remove, findEntry };
+module.exports = { parseForm, readSubmission, readName, readUuid, upsert, remove, findEntry, rename };

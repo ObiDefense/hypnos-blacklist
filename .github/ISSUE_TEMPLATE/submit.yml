@@ -14,6 +14,13 @@ body:
       placeholder: Notch
     validations:
       required: true
+  - type: input
+    id: uuid
+    attributes:
+      label: UUID
+      description: Filled in by Hypnos. Leave it empty if you don't know it.
+    validations:
+      required: false
   - type: dropdown
     id: tag
     attributes:

@@ -20,3 +20,7 @@ Review the issue, then add a label:
 
 Only people with **Triage** access or more can add labels (and the workflow checks that again).
 Every change is a commit in this repository, so it can be reverted.
+
+Entries are tied to the player's UUID (Hypnos fills it into the forms). Every Monday the workflow
+updates the names of listed players who changed their name; old names are kept in `pastNames`.
+To run that now: Actions → Blacklist → *Run workflow*.

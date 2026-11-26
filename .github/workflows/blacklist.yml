@@ -1,12 +1,16 @@
 name: Blacklist
 
 # A mod labels an issue: "approved" (submission → added), "denied" (closed), "remove" (player taken off).
+# Weekly (or via "Run workflow"): names of listed UUIDs are updated after name changes.
 # Only people with Triage access or more can add labels, and the script checks that again.
 # Third-party actions are pinned to exact commits (v4.4.0) so a moved tag can't change what runs here.
 
 on:
   issues:
     types: [labeled]
+  schedule:
+    - cron: '17 4 * * 1' # Mondays: follow name changes (blacklist.json keeps UUIDs, names are refreshed)
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -18,7 +22,7 @@ concurrency:
 
 jobs:
   apply:
-    if: contains(fromJSON('["approved", "denied", "remove"]'), github.event.label.name)
+    if: github.event_name != 'issues' || contains(fromJSON('["approved", "denied", "remove"]'), github.event.label.name)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

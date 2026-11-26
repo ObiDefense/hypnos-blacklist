@@ -47,7 +47,8 @@ const LINK = /^https?:\/\/[^\s"<>]+$/i;
 function readSubmission(issue) {
   const form = parseForm(issue.body);
   const name = clip(form['Minecraft name'], 32).replace(/^@/, '');
-  if (!NAME.test(name)) return { error: `"${clip(name, 32)}" is not a valid Minecraft name.` };
+  // shown in a bot comment: inside a code span, so it can't @mention anyone or inject links
+  if (!NAME.test(name)) return { error: `\`${clip(name, 32).replace(/`/g, '')}\` is not a valid Minecraft name.` };
   const tag = TAGS[String(form.Tag || '').trim().toLowerCase()] || 'blatant_cheater';
   const reason = clip(form.Reason, 200);
   if (!reason) return { error: 'The reason is empty.' };

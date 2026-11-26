@@ -206,8 +206,10 @@ async function main() {
     return;
   }
 
-  const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
-  const isRemoval = labels.includes('removal-request');
+  // which form made the issue, from its fields (the forms' own labels only exist if someone created them)
+  const form = parseForm(issue.body);
+  const isRemoval = 'Why should they be removed?' in form && 'Minecraft name' in form;
+  const isSubmission = 'Minecraft name' in form && 'Reason' in form && 'Evidence' in form;
 
   if (label === 'denied') {
     await say(`Denied by @${mod}.`);
@@ -236,7 +238,7 @@ async function main() {
   }
 
   // approved submission: only issues made with the "Submit a player" form
-  if (!labels.includes('submission')) {
+  if (!isSubmission) {
     await say('`approved` only works on issues made with the *Submit a player* form.');
     return;
   }
